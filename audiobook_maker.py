@@ -253,34 +253,18 @@ def mix_audio_simple(segments: List[Dict], output_path: str) -> bool:
 
 def load_sample_story() -> str:
     """Load a sample story for audiobook generation."""
-    story = """
-    Sarah had always been curious about the old mansion at the end of her street. 
-    Today, she finally decided to explore it. She walked slowly up the cracked pathway, 
-    her footsteps echoing in the quiet afternoon.
-    
-    When she reached the front entrance, Sarah hesitated for a moment before pushing 
-    open the heavy wooden door. The door creaked loudly as it swung open, revealing 
-    a dusty hallway filled with shadows.
-    
-    As she stepped inside, something moved in the darkness ahead. Sarah let out a 
-    terrified scream when a dark figure suddenly appeared before her, thinking it 
-    was some kind of ghost or intruder.
-    
-    But then she started laughing when she realized it was just her own reflection 
-    in an old mirror. She felt much better and even a bit silly for being so scared. 
-    The mansion wasn't haunted after all - it was just full of memories and old furniture.
-    
-    Sarah spent the rest of the afternoon exploring the beautiful old rooms, discovering 
-    family photographs and antique books. She left feeling peaceful and happy, 
-    having conquered her fears and found something wonderful instead.
-    """
-    
-    return story.strip()
+    from config.settings import SAMPLE_STORY
+    return SAMPLE_STORY
 
-def generate_audiobook(story: str, output_path: str = "data/output/demo_result.mp3") -> bool:
+def generate_audiobook(story: str, output_path: str = None) -> bool:
     """
     Generate a complete audiobook with narration, background music, and sound effects.
     """
+    
+    # Set default output path from config if not provided
+    if output_path is None:
+        from config.settings import get_output_path
+        output_path = get_output_path('audiobook_maker')
     
     print("\n🎧 Starting Audiobook Generation")
     print("=" * 50)
@@ -476,11 +460,12 @@ def main():
     word_count = len(story.split())
     print(f"   ✅ Loaded story: {len(story)} characters, {word_count} words")
     
-    # Generate the audiobook
-    output_file = "data/output/demo_result.mp3"
-    success = generate_audiobook(story, output_file)
+    # Generate the audiobook (uses config default path)
+    success = generate_audiobook(story)
     
     if success:
+        from config.settings import get_output_path
+        output_file = get_output_path('audiobook_maker')
         print(f"\n🎉 SUCCESS! Audiobook created: {output_file}")
         print(f"💡 Play with: open {output_file}")
         

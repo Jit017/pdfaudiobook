@@ -142,24 +142,31 @@ def generate_single_audio_chunk(text: str, output_path: str) -> bool:
         # Create a completely fresh engine instance
         engine = pyttsx3.init()
         
-        # Configure the engine
+        # Configure the engine using config settings
+        from config.settings import TTS_CONFIG
+        tts_settings = TTS_CONFIG['pyttsx3']
+        
         voices = engine.getProperty('voices')
         if voices and len(voices) > 0:
-            # Find the best English voice
+            # Find the best English voice using config keywords
             best_voice = None
             for voice in voices:
-                if 'english' in voice.name.lower() or 'en_' in voice.id.lower():
-                    best_voice = voice.id
+                for keyword in tts_settings['voice_selection']['preferred_keywords']:
+                    if keyword in voice.name.lower() or keyword in voice.id.lower():
+                        best_voice = voice.id
+                        break
+                if best_voice:
                     break
             
             if best_voice:
                 engine.setProperty('voice', best_voice)
             else:
-                engine.setProperty('voice', voices[0].id)
+                fallback_index = tts_settings['voice_selection']['fallback_index']
+                engine.setProperty('voice', voices[fallback_index].id)
         
-        # Set optimal properties
-        engine.setProperty('rate', 150)
-        engine.setProperty('volume', 1.0)
+        # Set optimal properties from config
+        engine.setProperty('rate', tts_settings['rate'])
+        engine.setProperty('volume', tts_settings['volume'])
         
         # Generate the audio
         engine.save_to_file(text, output_path)
@@ -176,8 +183,9 @@ def generate_single_audio_chunk(text: str, output_path: str) -> bool:
         
         # Verify file was created
         if Path(output_path).exists():
+            from config.settings import AUDIO_PROCESSING
             file_size = Path(output_path).stat().st_size
-            return file_size > 1000  # At least 1KB
+            return file_size > AUDIO_PROCESSING['minimum_file_size']
         
         return False
         
@@ -216,7 +224,8 @@ def generate_audiobook_from_text(text: str, output_path: str, tts_engine: str = 
         # Step 1: Generate TTS for each chunk
         status_text.text("🎙️ Generating speech narration...")
         
-        temp_dir = Path("data/output/temp_narration")
+        from config.settings import OUTPUT_FILES
+        temp_dir = Path(OUTPUT_FILES['temp_narration_dir'])
         temp_dir.mkdir(parents=True, exist_ok=True)
         
         narration_files = []
@@ -237,11 +246,12 @@ def generate_audiobook_from_text(text: str, output_path: str, tts_engine: str = 
                 # Clean approach: create new engine for each chunk
                 success = generate_single_audio_chunk(chunk['text'], str(test_file))
                 
-                if success and test_file.exists() and test_file.stat().st_size > 1000:
+                from config.settings import AUDIO_PROCESSING
+                if success and test_file.exists() and test_file.stat().st_size > AUDIO_PROCESSING['minimum_file_size']:
                     # Verify audio content
                     try:
                         test_audio = AudioSegment.from_file(str(test_file))
-                        if len(test_audio) > 100:  # At least 100ms
+                        if len(test_audio) > AUDIO_PROCESSING['minimum_duration']:
                             audio_file = test_file
                             chunk['audio_file'] = str(audio_file)
                             chunk['audio_format'] = 'aiff'
@@ -276,13 +286,8 @@ def generate_audiobook_from_text(text: str, output_path: str, tts_engine: str = 
         status_text.text("🎵 Mixing audio with background music and sound effects...")
         progress_bar.progress(0.9)
         
-        # Emotion to BGM mapping
-        EMOTION_BGM_MAP = {
-            "joy": "assets/bg_music/joy.mp3",
-            "sadness": "assets/bg_music/sadness.mp3", 
-            "fear": "assets/bg_music/sadness.mp3",
-            "neutral": "assets/bg_music/sadness.mp3"
-        }
+        # Import emotion to BGM mapping from config
+        from config.settings import get_bgm_path
         
         final_audio = AudioSegment.empty()
         
@@ -311,7 +316,7 @@ def generate_audiobook_from_text(text: str, output_path: str, tts_engine: str = 
             
             # Load and mix background music
             emotion = chunk['emotion']
-            bgm_file = EMOTION_BGM_MAP.get(emotion, "assets/bg_music/sadness.mp3")
+            bgm_file = get_bgm_path(emotion)
             
             try:
                 bgm = AudioSegment.from_mp3(bgm_file)
@@ -320,7 +325,7 @@ def generate_audiobook_from_text(text: str, output_path: str, tts_engine: str = 
                     repeats = (len(narration) // len(bgm)) + 1
                     bgm = bgm * repeats
                 bgm = bgm[:len(narration)]
-                bgm = bgm - 20  # Lower BGM volume
+                bgm = bgm - AUDIO_PROCESSING['bgm_volume_reduction']  # Lower BGM volume
                 
                 segment_audio = narration.overlay(bgm)
             except Exception as e:
@@ -329,18 +334,23 @@ def generate_audiobook_from_text(text: str, output_path: str, tts_engine: str = 
             
             # Add sound effects
             for sfx_type in chunk['sfx']:
-                sfx_file = f"assets/sfx/{sfx_type}.mp3"
-                try:
-                    sfx = AudioSegment.from_mp3(sfx_file)
-                    if len(sfx) <= len(segment_audio):
-                        segment_audio = segment_audio.overlay(sfx, position=0)
-                except Exception as e:
-                    st.warning(f"Failed to load SFX {sfx_file}: {e}")
+                from config.settings import get_sfx_path
+                sfx_file = get_sfx_path(sfx_type)
+                if sfx_file:
+                    try:
+                        sfx = AudioSegment.from_mp3(sfx_file)
+                        if len(sfx) <= len(segment_audio):
+                            segment_audio = segment_audio.overlay(sfx, position=0)
+                    except Exception as e:
+                        st.warning(f"Failed to load SFX {sfx_file}: {e}")
+                else:
+                    st.warning(f"SFX file not found for type: {sfx_type}")
             
             # Add to final audio with pause
             final_audio += segment_audio
             if i < len([c for c in chunks if c.get('audio_file')]) - 1:
-                final_audio += AudioSegment.silent(duration=500)  # 0.5 second pause
+                pause_duration = AUDIO_PROCESSING['mixing_pause_between_segments']
+                final_audio += AudioSegment.silent(duration=pause_duration)
         
         # Normalize and export
         status_text.text("📁 Exporting final audiobook...")
@@ -440,25 +450,8 @@ def main():
         use_sample = st.checkbox("Use built-in sample story")
         
         if use_sample:
-            sample_text = """
-            Sarah had always been curious about the old mansion at the end of her street. 
-            Today, she finally decided to explore it. She walked slowly up the cracked pathway, 
-            her footsteps echoing in the quiet afternoon.
-            
-            When she reached the front entrance, Sarah hesitated for a moment before pushing 
-            open the heavy wooden door. The door creaked loudly as it swung open, revealing 
-            a dusty hallway filled with shadows.
-            
-            As she stepped inside, something moved in the darkness ahead. Sarah let out a 
-            terrified scream when a dark figure suddenly appeared before her, thinking it 
-            was some kind of ghost or intruder.
-            
-            But then she started laughing when she realized it was just her own reflection 
-            in an old mirror. She felt much better and even a bit silly for being so scared. 
-            The mansion wasn't haunted after all - it was just full of memories and old furniture.
-            """
-            
-            st.text_area("Sample story:", sample_text, height=200, disabled=True)
+            from config.settings import SAMPLE_STORY
+            st.text_area("Sample story:", SAMPLE_STORY, height=200, disabled=True)
     
     with col2:
         st.header("🎧 Generate Audiobook")
@@ -492,14 +485,8 @@ def main():
                 st.error("❌ Failed to extract text from PDF")
         
         elif use_sample:
-            extracted_text = """Sarah had always been curious about the old mansion at the end of her street. Today, she finally decided to explore it. She walked slowly up the cracked pathway, her footsteps echoing in the quiet afternoon.
-
-When she reached the front entrance, Sarah hesitated for a moment before pushing open the heavy wooden door. The door creaked loudly as it swung open, revealing a dusty hallway filled with shadows.
-
-As she stepped inside, something moved in the darkness ahead. Sarah let out a terrified scream when a dark figure suddenly appeared before her, thinking it was some kind of ghost or intruder.
-
-But then she started laughing when she realized it was just her own reflection in an old mirror. She felt much better and even a bit silly for being so scared. The mansion wasn't haunted after all - it was just full of memories and old furniture."""
-            
+            from config.settings import SAMPLE_STORY
+            extracted_text = SAMPLE_STORY
             st.info("✅ Using sample story")
         
         # Generation button
@@ -539,7 +526,8 @@ But then she started laughing when she realized it was just her own reflection i
             
             # Generate button
             if st.button("🎬 Generate Audiobook", type="primary", use_container_width=True):
-                output_path = "data/output/streamlit_result.mp3"
+                from config.settings import get_output_path
+                output_path = get_output_path('streamlit')
                 
                 with st.spinner("🎧 Generating audiobook... This may take a few minutes."):
                     success = generate_audiobook_from_text(extracted_text, output_path, tts_engine)
@@ -562,7 +550,8 @@ But then she started laughing when she realized it was just her own reflection i
     st.markdown("---")
     st.header("🎵 Generated Audiobook")
     
-    output_path = "data/output/streamlit_result.mp3"
+    from config.settings import get_output_path
+    output_path = get_output_path('streamlit')
     if Path(output_path).exists():
         st.success("✅ Audiobook available!")
         

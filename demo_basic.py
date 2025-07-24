@@ -390,11 +390,8 @@ def demo_simplified_audiobook():
     
     try:
         # Test the core logic without external dependencies
-        story = """
-        Sarah walked slowly toward the old wooden door. The door creaked loudly as she pushed it open.
-        She let out a terrified scream when she saw the dark figure inside.
-        But then she realized it was just her coat hanging on a hook, and she felt much better.
-        """
+        from config.settings import SAMPLE_STORY
+        story = SAMPLE_STORY
         
         print("🔍 Step 1: Text processing (simulated)...")
         
